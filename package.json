@@ -1,0 +1,35 @@
+{
+  "name": "imagediction",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Local-first review diction and screenshot feedback app",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "app": "cargo tauri build --debug --bundles app && ./scripts/install-macos-app.sh",
+    "open:app": "open /Applications/Feedback.app",
+    "fresh:app": "sh -c 'pkill imagediction >/dev/null 2>&1 || true; tccutil reset ScreenCapture com.alexpickett.imagediction; tccutil reset Microphone com.alexpickett.imagediction; open /Applications/Feedback.app'",
+    "logs:app": "cat \"$HOME/Library/Logs/Feedback/debug.log\"",
+    "logs:clear": "mkdir -p \"$HOME/Library/Logs/Feedback\" && : > \"$HOME/Library/Logs/Feedback/debug.log\"",
+    "install:mac": "./scripts/install-macos-app.sh",
+    "dmg": "cargo tauri build --debug"
+  },
+  "dependencies": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-opener": "^2"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.6.0",
+    "typescript": "~5.8.3",
+    "vite": "^7.0.4",
+    "@tauri-apps/cli": "^2"
+  }
+}
