@@ -9,7 +9,19 @@ use anyhow::{anyhow, Context, Result};
 use crate::{model::AppSettings, settings};
 
 pub fn is_configured(settings: &AppSettings) -> bool {
-    !settings.whisper_model_path.trim().is_empty() && resolve_binary(settings).is_ok()
+    configuration_error(settings).is_none()
+}
+
+pub fn configuration_error(settings: &AppSettings) -> Option<String> {
+    if let Err(error) = resolve_binary(settings) {
+        return Some(error.to_string());
+    }
+
+    if let Err(error) = resolve_model_path(settings) {
+        return Some(error.to_string());
+    }
+
+    None
 }
 
 pub fn transcribe_audio(input: &Path, settings: &AppSettings) -> Result<String> {

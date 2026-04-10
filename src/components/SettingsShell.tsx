@@ -1,6 +1,6 @@
 import { type FormEvent, useEffect, useState } from "react";
 
-import { loadAppSettings, saveAppSettings } from "../api";
+import { installLocalWhisper, loadAppSettings, saveAppSettings } from "../api";
 import type {
   AppSettingsSavePayload,
   AppSettingsView,
@@ -47,6 +47,7 @@ export function SettingsShell() {
   const [clearOpenAiApiKey, setClearOpenAiApiKey] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isInstallingWhisper, setIsInstallingWhisper] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
@@ -84,6 +85,22 @@ export function SettingsShell() {
     setSettings((current) => ({ ...current, [key]: value }));
   }
 
+  async function handleInstallWhisper() {
+    setIsInstallingWhisper(true);
+    setErrorMessage(null);
+    setStatusMessage(null);
+
+    try {
+      const installed = await installLocalWhisper();
+      setSettings(installed);
+      setStatusMessage("Installed whisper.cpp and downloaded the base.en model.");
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error, "Could not install Local Whisper."));
+    } finally {
+      setIsInstallingWhisper(false);
+    }
+  }
+
   async function handleSave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setIsSaving(true);
@@ -116,6 +133,8 @@ export function SettingsShell() {
   }
 
   const usingOpenAi = settings.transcriptionProvider === "openai";
+  const whisperConfigured =
+    settings.whisperBinaryPath.trim().length > 0 && settings.whisperModelPath.trim().length > 0;
 
   return (
     <main className="settings-shell">
@@ -269,6 +288,29 @@ export function SettingsShell() {
                       model file.
                     </p>
                   </div>
+                  <div className={`settings-badge ${whisperConfigured ? "is-ready" : ""}`}>
+                    {whisperConfigured ? "Ready to transcribe" : "Needs install"}
+                  </div>
+                </div>
+
+                <div className="settings-install-card">
+                  <div className="settings-install-copy">
+                    <strong>One-click local setup</strong>
+                    <span>
+                      Installs `whisper-cpp` through Homebrew and downloads the `ggml-base.en.bin`
+                      model into Feedback’s app support folder.
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className="settings-install"
+                    disabled={isInstallingWhisper}
+                    onClick={() => {
+                      void handleInstallWhisper();
+                    }}
+                  >
+                    {isInstallingWhisper ? "Installing…" : "Install Local Whisper"}
+                  </button>
                 </div>
 
                 <div className="settings-grid">

@@ -13,6 +13,7 @@
     "app": "cargo tauri build --debug --bundles app && ./scripts/install-macos-app.sh",
     "open:app": "open /Applications/Feedback.app",
     "fresh:app": "sh -c 'pkill imagediction >/dev/null 2>&1 || true; tccutil reset ScreenCapture com.alexpickett.imagediction; tccutil reset Microphone com.alexpickett.imagediction; open /Applications/Feedback.app'",
+    "install:whisper": "./scripts/install-local-whisper.sh",
     "logs:app": "cat \"$HOME/Library/Logs/Feedback/debug.log\"",
     "logs:clear": "mkdir -p \"$HOME/Library/Logs/Feedback\" && : > \"$HOME/Library/Logs/Feedback/debug.log\"",
     "install:mac": "./scripts/install-macos-app.sh",

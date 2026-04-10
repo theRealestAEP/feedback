@@ -10,10 +10,30 @@ use crate::{
 
 pub fn transcription_status(app: &AppHandle) -> Result<TranscriptionStatus> {
     let settings = settings::load_settings(app)?;
-    let configured = match settings.transcription_provider {
-        TranscriptionProvider::OpenAi => settings::has_openai_api_key(app)?,
-        TranscriptionProvider::LocalWhisper => whisper::is_configured(&settings),
-    };
+    let openai_configured = settings::has_openai_api_key(app)?;
+    let whisper_configured = whisper::is_configured(&settings);
+    let (configured, message, fallback_provider, fallback_configured) =
+        match settings.transcription_provider {
+            TranscriptionProvider::OpenAi => (
+                openai_configured,
+                if openai_configured {
+                    None
+                } else {
+                    Some(
+                        "OpenAI is selected, but no API key is configured in Feedback -> Settings."
+                            .to_string(),
+                    )
+                },
+                Some("local_whisper".to_string()),
+                whisper_configured,
+            ),
+            TranscriptionProvider::LocalWhisper => (
+                whisper_configured,
+                whisper::configuration_error(&settings),
+                Some("openai".to_string()),
+                openai_configured,
+            ),
+        };
     let model = match settings.transcription_provider {
         TranscriptionProvider::OpenAi => settings.openai_model.clone(),
         TranscriptionProvider::LocalWhisper => {
@@ -32,6 +52,9 @@ pub fn transcription_status(app: &AppHandle) -> Result<TranscriptionStatus> {
             TranscriptionProvider::LocalWhisper => "local_whisper".to_string(),
         },
         model,
+        message,
+        fallback_provider,
+        fallback_configured,
     })
 }
 

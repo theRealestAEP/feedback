@@ -16,7 +16,8 @@ fn compile_sidecar() {
         .join("sidecar")
         .join("ImageDictionSidecar.swift");
     let binary_dir = manifest_dir.join("binaries");
-    let binary = binary_dir.join("imagediction-sidecar-aarch64-apple-darwin");
+    let target = env::var("TARGET").expect("missing TARGET");
+    let binary = binary_dir.join(format!("imagediction-sidecar-{target}"));
 
     fs::create_dir_all(&binary_dir).expect("failed to create sidecar binaries directory");
 

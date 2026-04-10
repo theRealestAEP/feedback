@@ -1,52 +1,30 @@
 import { listen } from "@tauri-apps/api/event";
-import {
-  getCurrentWindow,
-  LogicalPosition,
-  LogicalSize,
-  primaryMonitor,
-} from "@tauri-apps/api/window";
-import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
+import { type CSSProperties, useEffect, useEffectEvent, useRef, useState } from "react";
 
 import {
   appendDebugLog,
   captureInteractive,
   createSession,
+  getTranscriptionStatus,
+  openSettingsWindow,
   saveCaptureEntry,
   startMainWindowDrag,
   startNativeRecording,
   stopNativeRecording,
+  syncMainWindowLayout,
 } from "../api";
 import type { CaptureDraft, SessionMode, SessionView } from "../types";
 
-const currentWindow = getCurrentWindow();
-
-const INITIAL_POD_WIDTH = 140;
-const INITIAL_POD_HEIGHT = 44;
-const BOTTOM_MARGIN = 16;
 const BUTTON_DEBOUNCE_MS = 800;
+const NOTICE_TIMEOUT_MS = 6000;
 
-async function setWindowToPodSize(width: number, height: number) {
-  await currentWindow.setSize(new LogicalSize(width, height));
-}
-
-async function dockMainWindow(width: number, height: number) {
-  const monitor = await primaryMonitor();
-  if (!monitor) {
-    return;
-  }
-
-  const workAreaPosition = monitor.workArea.position.toLogical(monitor.scaleFactor);
-  const workAreaSize = monitor.workArea.size.toLogical(monitor.scaleFactor);
-  const x = Math.round(
-    workAreaPosition.x + (workAreaSize.width - width) / 2,
-  );
-  const y = Math.round(
-    workAreaPosition.y + workAreaSize.height - height - BOTTOM_MARGIN,
-  );
-
-  await setWindowToPodSize(width, height);
-  await currentWindow.setPosition(new LogicalPosition(x, y));
-}
+type PillNotice = {
+  tone: "error" | "info";
+  title: string;
+  detail?: string;
+  actionLabel?: string;
+  action?: () => void;
+};
 
 function formatRecordingDuration(startedAt: number, now: number) {
   const elapsedSeconds = Math.max(0, Math.floor((now - startedAt) / 1000));
@@ -55,23 +33,52 @@ function formatRecordingDuration(startedAt: number, now: number) {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
+function ScreenshotIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <rect
+        x="3"
+        y="3"
+        width="10"
+        height="10"
+        rx="2"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeDasharray="1.75 1.75"
+      />
+    </svg>
+  );
+}
+
+function StopIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <rect x="3.5" y="3.5" width="9" height="9" rx="1.8" fill="currentColor" />
+    </svg>
+  );
+}
+
 export function MainShell() {
   const [activeSession, setActiveSession] = useState<SessionView | null>(null);
   const [isRecording, setIsRecording] = useState(false);
+  const [isProcessingRecording, setIsProcessingRecording] = useState(false);
   const [isStartingRecording, setIsStartingRecording] = useState(false);
   const [isStartingCapture, setIsStartingCapture] = useState(false);
   const [isStoppingRecording, setIsStoppingRecording] = useState(false);
   const [recordingStartedAt, setRecordingStartedAt] = useState<number | null>(null);
   const [recordingNow, setRecordingNow] = useState<number>(() => Date.now());
-  const recordLabel = isRecording && recordingStartedAt
-    ? `Stop ${formatRecordingDuration(recordingStartedAt, recordingNow)}`
-    : "Record";
+  const [notice, setNotice] = useState<PillNotice | null>(null);
+  const isExpanded = isRecording || isProcessingRecording;
+  const recordingDuration = isRecording && recordingStartedAt
+    ? formatRecordingDuration(recordingStartedAt, recordingNow)
+    : null;
 
-  const podRef = useRef<HTMLElement | null>(null);
   const recordingSessionRef = useRef<SessionView | null>(null);
   const hasUserMovedWindowRef = useRef(false);
   const recordActionLockRef = useRef(false);
   const captureActionLockRef = useRef(false);
+  const noticeTimeoutRef = useRef<number | null>(null);
 
   function logDebug(message: string) {
     void appendDebugLog(message).catch(() => {
@@ -95,49 +102,29 @@ export function MainShell() {
     }, remaining);
   }
 
+  function clearNoticeTimeout() {
+    if (noticeTimeoutRef.current !== null) {
+      window.clearTimeout(noticeTimeoutRef.current);
+      noticeTimeoutRef.current = null;
+    }
+  }
+
+  const showNotice = useEffectEvent((next: PillNotice) => {
+    clearNoticeTimeout();
+    setNotice(next);
+    noticeTimeoutRef.current = window.setTimeout(() => {
+      setNotice(null);
+      noticeTimeoutRef.current = null;
+    }, NOTICE_TIMEOUT_MS);
+  });
+
   useEffect(() => {
-    void dockMainWindow(INITIAL_POD_WIDTH, INITIAL_POD_HEIGHT);
+    void syncMainWindowLayout(false, true);
   }, []);
 
-  useLayoutEffect(() => {
-    const pod = podRef.current;
-    if (!pod) {
-      return;
-    }
-
-    let frame = 0;
-
-    const syncSize = () => {
-      const width = Math.ceil(pod.getBoundingClientRect().width);
-      const height = Math.ceil(pod.getBoundingClientRect().height);
-      if (width <= 0 || height <= 0) {
-        return;
-      }
-
-      if (hasUserMovedWindowRef.current) {
-        void setWindowToPodSize(width, height);
-      } else {
-        void dockMainWindow(width, height);
-      }
-    };
-
-    const scheduleSync = () => {
-      window.cancelAnimationFrame(frame);
-      frame = window.requestAnimationFrame(syncSize);
-    };
-
-    scheduleSync();
-
-    const observer = new ResizeObserver(() => {
-      scheduleSync();
-    });
-    observer.observe(pod);
-
-    return () => {
-      window.cancelAnimationFrame(frame);
-      observer.disconnect();
-    };
-  }, [isRecording]);
+  useEffect(() => {
+    void syncMainWindowLayout(isExpanded, !hasUserMovedWindowRef.current);
+  }, [isExpanded]);
 
   useEffect(() => {
     if (!recordingStartedAt) {
@@ -151,6 +138,10 @@ export function MainShell() {
 
     return () => window.clearInterval(timer);
   }, [recordingStartedAt]);
+
+  useEffect(() => () => {
+    clearNoticeTimeout();
+  }, []);
 
   const persistCaptureDraft = useEffectEvent(async (draft: CaptureDraft) => {
     const session = recordingSessionRef.current;
@@ -184,6 +175,7 @@ export function MainShell() {
       !recordingSessionRef.current ||
       isStartingCapture ||
       isStartingRecording ||
+      isProcessingRecording ||
       isStoppingRecording ||
       !tryLockAction(captureActionLockRef)
     ) {
@@ -203,16 +195,15 @@ export function MainShell() {
 
       await persistCaptureDraft(draft);
     } catch (error) {
-      const pod = podRef.current;
-      if (pod) {
-        const width = Math.ceil(pod.getBoundingClientRect().width);
-        const height = Math.ceil(pod.getBoundingClientRect().height);
-        await setWindowToPodSize(width, height);
-      }
+      await syncMainWindowLayout(true, !hasUserMovedWindowRef.current);
       const message =
         error instanceof Error ? error.message : "Couldn't start the macOS crop tool.";
       console.error(message);
-      window.alert(message);
+      showNotice({
+        tone: "error",
+        title: "Screenshot failed",
+        detail: message,
+      });
     } finally {
       setIsStartingCapture(false);
       releaseActionLock(captureActionLockRef, actionStartedAt);
@@ -242,6 +233,7 @@ export function MainShell() {
     if (
       isStartingRecording ||
       isStartingCapture ||
+      isProcessingRecording ||
       isStoppingRecording ||
       !tryLockAction(recordActionLockRef)
     ) {
@@ -253,6 +245,15 @@ export function MainShell() {
     const actionStartedAt = Date.now();
 
     try {
+      const transcriptionStatus = await getTranscriptionStatus();
+      if (!transcriptionStatus.configured) {
+        logDebug(
+          `ui:start_recording_blocked provider=${transcriptionStatus.provider} configured=false`,
+        );
+        void openSettingsWindow();
+        return;
+      }
+
       const session = await createSession(undefined, "dictation");
       logDebug(`ui:session_created id=${session.id}`);
       setActiveSession(session);
@@ -263,6 +264,7 @@ export function MainShell() {
 
       const startedAt = Date.now();
       setIsRecording(true);
+      setIsProcessingRecording(false);
       setRecordingStartedAt(startedAt);
       setRecordingNow(startedAt);
     } catch (error) {
@@ -270,9 +272,14 @@ export function MainShell() {
         error instanceof Error ? error.message : "Couldn't start recording.";
       logDebug(`ui:start_recording_error ${message}`);
       console.error(message);
-      window.alert(message);
+      showNotice({
+        tone: "error",
+        title: "Couldn't start recording",
+        detail: message,
+      });
       recordingSessionRef.current = null;
       setIsRecording(false);
+      setIsProcessingRecording(false);
       setRecordingStartedAt(null);
     } finally {
       setIsStartingRecording(false);
@@ -290,6 +297,7 @@ export function MainShell() {
       isStoppingRecording ||
       isStartingCapture ||
       isStartingRecording ||
+      isProcessingRecording ||
       !tryLockAction(recordActionLockRef)
     ) {
       logDebug("ui:stop_recording_ignored_debounce");
@@ -297,6 +305,10 @@ export function MainShell() {
     }
 
     setIsStoppingRecording(true);
+    setIsProcessingRecording(true);
+    setIsRecording(false);
+    setRecordingStartedAt(null);
+    setRecordingNow(Date.now());
     logDebug(`ui:stop_recording_begin id=${session.id}`);
     const actionStartedAt = Date.now();
 
@@ -305,19 +317,23 @@ export function MainShell() {
       logDebug(`ui:stop_recording_ok id=${savedSession.id}`);
       setActiveSession(savedSession);
       recordingSessionRef.current = null;
-      setIsRecording(false);
-      setRecordingStartedAt(null);
+      setIsProcessingRecording(false);
       setRecordingNow(Date.now());
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Couldn't finish recording.";
       logDebug(`ui:stop_recording_error ${message}`);
       setIsRecording(false);
+      setIsProcessingRecording(false);
       setRecordingStartedAt(null);
       setRecordingNow(Date.now());
       recordingSessionRef.current = null;
       console.error(message);
-      window.alert(message);
+      showNotice({
+        tone: "error",
+        title: "Couldn't finish recording",
+        detail: message,
+      });
     } finally {
       setIsStoppingRecording(false);
       releaseActionLock(recordActionLockRef, actionStartedAt);
@@ -326,64 +342,113 @@ export function MainShell() {
 
   return (
     <main className="dock-scene">
-      <section
-        ref={podRef}
-        className={`control-pod ${isRecording ? "is-recording" : "is-idle"}`}
-      >
-        <div
-          className="pod-handle"
-          aria-hidden="true"
-          onPointerDown={(event) => {
-            if (event.button !== 0) {
-              return;
-            }
+      <div className="dock-stack">
+        {notice ? (
+          <div className={`pill-notice is-${notice.tone}`} role="status" aria-live="polite">
+            <div className="pill-notice-copy">
+              <strong>{notice.title}</strong>
+              {notice.detail ? <span>{notice.detail}</span> : null}
+            </div>
+            {notice.action && notice.actionLabel ? (
+              <button
+                type="button"
+                className="pill-notice-action"
+                onClick={() => {
+                  notice.action?.();
+                }}
+              >
+                {notice.actionLabel}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
 
-            event.preventDefault();
-            hasUserMovedWindowRef.current = true;
-            void startMainWindowDrag().catch((error) => {
-              console.error("Couldn't drag the Feedback pill.", error);
-            });
-          }}
+        <section
+          className={`control-pod ${isExpanded ? "is-recording" : "is-idle"} ${isProcessingRecording ? "is-processing" : ""}`}
         >
-          <span className="pod-handle-dot" />
-          <span className="pod-handle-dot" />
-          <span className="pod-handle-dot" />
-        </div>
-
-        <div className={`pod-actions ${isRecording ? "is-recording" : "is-idle"}`}>
-          <button
-            type="button"
-            className={`utility-button utility-button-record ${isRecording ? "is-recording" : ""}`}
+          <div
+            className="pod-handle"
+            aria-hidden="true"
             onPointerDown={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              logDebug(`ui:record_button_press isRecording=${String(isRecording)}`);
-              if (isRecording) {
-                void handleStopRecording();
-              } else {
-                void handleStartRecording();
+              if (event.button !== 0) {
+                return;
               }
+
+              event.preventDefault();
+              hasUserMovedWindowRef.current = true;
+              void startMainWindowDrag().catch((error) => {
+                console.error("Couldn't drag the Feedback pill.", error);
+              });
             }}
           >
-            {recordLabel}
-          </button>
-          {isRecording ? (
-            <button
-              type="button"
-              className="utility-button utility-button-secondary"
-              disabled={isStartingCapture || isStartingRecording || isStoppingRecording}
-              onPointerDown={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                logDebug("ui:crop_button_press");
-                void beginCapture();
-              }}
-            >
-              Crop
-            </button>
-          ) : null}
-        </div>
-      </section>
+            <span className="pod-handle-dot" />
+            <span className="pod-handle-dot" />
+            <span className="pod-handle-dot" />
+          </div>
+
+          <div className={`pod-actions ${isExpanded ? "is-recording" : "is-idle"}`}>
+            {!isExpanded ? (
+              <button
+                type="button"
+                className="utility-button utility-button-start"
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  logDebug(`ui:start_button_press isRecording=${String(isRecording)}`);
+                  void handleStartRecording();
+                }}
+              >
+                Start
+              </button>
+            ) : isProcessingRecording ? (
+              <div className="processing-status" aria-live="polite" aria-label="Processing recording">
+                <div className="processing-trail" aria-hidden="true">
+                  <span className="processing-dot" style={{ "--index": 0 } as CSSProperties} />
+                  <span className="processing-dot" style={{ "--index": 1 } as CSSProperties} />
+                  <span className="processing-dot" style={{ "--index": 2 } as CSSProperties} />
+                  <span className="processing-dot" style={{ "--index": 3 } as CSSProperties} />
+                  <span className="processing-dot" style={{ "--index": 4 } as CSSProperties} />
+                </div>
+                <span className="processing-label">Processing</span>
+              </div>
+            ) : (
+              <>
+                <span className="recording-timer" aria-live="polite">
+                  {recordingDuration}
+                </span>
+                <button
+                  type="button"
+                  className="utility-button utility-button-icon utility-button-capture"
+                  aria-label="Take screenshot"
+                  disabled={isStartingCapture || isStartingRecording || isStoppingRecording}
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    logDebug("ui:crop_button_press");
+                    void beginCapture();
+                  }}
+                >
+                  <ScreenshotIcon />
+                </button>
+                <button
+                  type="button"
+                  className="utility-button utility-button-icon utility-button-stop"
+                  aria-label="Stop recording"
+                  disabled={isStoppingRecording || isStartingCapture || isStartingRecording}
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    logDebug("ui:stop_button_press");
+                    void handleStopRecording();
+                  }}
+                >
+                  <StopIcon />
+                </button>
+              </>
+            )}
+          </div>
+        </section>
+      </div>
     </main>
   );
 }

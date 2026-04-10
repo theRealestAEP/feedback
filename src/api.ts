@@ -26,6 +26,10 @@ export function saveAppSettings(payload: AppSettingsSavePayload) {
   return invoke<AppSettingsView>("save_app_settings", { payload });
 }
 
+export function installLocalWhisper() {
+  return invoke<AppSettingsView>("install_local_whisper");
+}
+
 export function openSettingsWindow() {
   return invoke<void>("open_settings_window");
 }
@@ -82,6 +86,10 @@ export function openSessionFolder(sessionId: string) {
 
 export function startMainWindowDrag() {
   return invoke<void>("start_main_window_drag");
+}
+
+export function syncMainWindowLayout(recording: boolean, docked: boolean) {
+  return invoke<void>("sync_main_window_layout", { recording, docked });
 }
 
 export function getPermissionStatus() {

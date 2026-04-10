@@ -87,6 +87,9 @@ export interface TranscriptionStatus {
   configured: boolean;
   provider: string;
   model: string;
+  message: string | null;
+  fallbackProvider: string | null;
+  fallbackConfigured: boolean;
 }
 
 export type TranscriptionProvider = "openai" | "local_whisper";

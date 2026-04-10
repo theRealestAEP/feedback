@@ -45,6 +45,10 @@ struct RecordingState {
 
 const SETTINGS_MENU_ID: &str = "settings";
 const SETTINGS_WINDOW_LABEL: &str = "settings";
+const MAIN_WINDOW_IDLE_WIDTH: f64 = 120.0;
+const MAIN_WINDOW_RECORDING_WIDTH: f64 = 190.0;
+const MAIN_WINDOW_HEIGHT: f64 = 44.0;
+const MAIN_WINDOW_BOTTOM_MARGIN: f64 = 24.0;
 
 #[tauri::command]
 fn load_app_settings(app: AppHandle) -> Result<model::AppSettingsView, String> {
@@ -57,6 +61,11 @@ fn save_app_settings(
     payload: AppSettingsSavePayload,
 ) -> Result<model::AppSettingsView, String> {
     settings::save_settings(&app, payload).map_err(stringify_error)
+}
+
+#[tauri::command]
+fn install_local_whisper(app: AppHandle) -> Result<model::AppSettingsView, String> {
+    settings::install_local_whisper(&app).map_err(stringify_error)
 }
 
 #[tauri::command]
@@ -229,7 +238,39 @@ fn start_native_recording(
     state: tauri::State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
+    let app_settings = settings::load_settings(&app).map_err(stringify_error)?;
+    let transcription_status = transcription::transcription_status(&app).map_err(stringify_error)?;
+    if !transcription_status.configured {
+        let mut message = transcription_status.message.unwrap_or_else(|| {
+            "The selected transcription provider is not configured.".to_string()
+        });
+        if transcription_status.fallback_configured {
+            let fallback_label = match transcription_status.fallback_provider.as_deref() {
+                Some("openai") => "OpenAI",
+                Some("local_whisper") => "Local Whisper",
+                _ => "the other provider",
+            };
+            message.push_str(
+                &format!(
+                    " {} is available. Switch providers in Feedback -> Settings if you want to keep recording.",
+                    fallback_label
+                ),
+            );
+        } else {
+            message.push_str(
+                " Open Feedback -> Settings and finish configuring transcription before recording.",
+            );
+        }
+        return Err(message);
+    }
+
     let root = sessions_root(&app).map_err(stringify_error)?;
+    storage::set_session_transcription_provider(
+        &root,
+        &session_id,
+        app_settings.transcription_provider.clone(),
+    )
+    .map_err(stringify_error)?;
     let mut recording = state.recording.lock().unwrap();
     if recording.is_some() {
         let _ = debug_log::append(&app, "start_native_recording:already_recording");
@@ -416,6 +457,21 @@ fn start_main_window_drag(window: WebviewWindow) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn sync_main_window_layout(
+    window: WebviewWindow,
+    recording: bool,
+    docked: bool,
+) -> Result<(), String> {
+    let width = if recording {
+        MAIN_WINDOW_RECORDING_WIDTH
+    } else {
+        MAIN_WINDOW_IDLE_WIDTH
+    };
+
+    apply_main_window_layout(&window, width, docked).map_err(stringify_error)
+}
+
+#[tauri::command]
 fn get_permission_status(state: tauri::State<'_, AppState>) -> PermissionStatus {
     state.permissions.lock().unwrap().clone()
 }
@@ -520,13 +576,27 @@ fn copy_dir_all(source: &PathBuf, destination: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn style_main_window<R: Runtime>(window: &WebviewWindow<R>) -> Result<()> {
+fn apply_main_window_layout<R: Runtime>(
+    window: &WebviewWindow<R>,
+    width: f64,
+    docked: bool,
+) -> Result<()> {
     let scale_factor = window
         .scale_factor()
         .context("failed to read main window scale factor")?;
+    let previous_position = if docked {
+        None
+    } else {
+        Some(
+            window
+                .outer_position()
+                .context("failed to read main window position")?
+                .to_logical::<f64>(scale_factor),
+        )
+    };
 
     window
-        .set_size(LogicalSize::new(140_f64, 44_f64))
+        .set_size(LogicalSize::new(width, MAIN_WINDOW_HEIGHT))
         .context("failed to size main window")?;
     window
         .set_background_color(Some(Color(0, 0, 0, 0)))
@@ -541,27 +611,40 @@ fn style_main_window<R: Runtime>(window: &WebviewWindow<R>) -> Result<()> {
         .set_shadow(false)
         .context("failed to disable main window shadow")?;
 
-    if let Some(monitor) = window
-        .primary_monitor()
-        .context("failed to read primary monitor")?
-    {
-        let work_area = monitor.work_area();
-        let work_area_width = work_area.size.width as f64 / scale_factor;
-        let work_area_height = work_area.size.height as f64 / scale_factor;
-        let work_area_x = work_area.position.x as f64 / scale_factor;
-        let work_area_y = work_area.position.y as f64 / scale_factor;
-        let window_size = window
-            .outer_size()
-            .context("failed to read main window size")?
-            .to_logical::<f64>(scale_factor);
-        let x = work_area_x + ((work_area_width - window_size.width) / 2.0);
-        let y = work_area_y + work_area_height - window_size.height - 24.0;
-        window
-            .set_position(LogicalPosition::new(x, y))
-            .context("failed to position main window")?;
-    }
+    let position = if docked {
+        if let Some(monitor) = window
+            .primary_monitor()
+            .context("failed to read primary monitor")?
+        {
+            let work_area = monitor.work_area();
+            let work_area_width = work_area.size.width as f64 / scale_factor;
+            let work_area_height = work_area.size.height as f64 / scale_factor;
+            let work_area_x = work_area.position.x as f64 / scale_factor;
+            let work_area_y = work_area.position.y as f64 / scale_factor;
+            let window_size = window
+                .outer_size()
+                .context("failed to read main window size")?
+                .to_logical::<f64>(scale_factor);
+            let x = work_area_x + ((work_area_width - window_size.width) / 2.0);
+            let y = work_area_y + work_area_height - window_size.height - MAIN_WINDOW_BOTTOM_MARGIN;
+
+            LogicalPosition::new(x, y)
+        } else {
+            previous_position.unwrap_or_else(|| LogicalPosition::new(0.0, 0.0))
+        }
+    } else {
+        previous_position.unwrap_or_else(|| LogicalPosition::new(0.0, 0.0))
+    };
+
+    window
+        .set_position(position)
+        .context("failed to position main window")?;
 
     Ok(())
+}
+
+fn style_main_window<R: Runtime>(window: &WebviewWindow<R>) -> Result<()> {
+    apply_main_window_layout(window, MAIN_WINDOW_IDLE_WIDTH, true)
 }
 
 fn build_app_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
@@ -703,6 +786,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             load_app_settings,
             save_app_settings,
+            install_local_whisper,
             open_settings_window,
             append_debug_log,
             read_debug_log,
@@ -718,6 +802,7 @@ pub fn run() {
             save_text_note,
             open_session_folder,
             start_main_window_drag,
+            sync_main_window_layout,
             get_permission_status,
             request_permissions,
             get_transcription_status

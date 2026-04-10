@@ -11,7 +11,6 @@ use std::{
 use anyhow::{anyhow, Context, Result};
 use tauri::{AppHandle, Manager};
 
-const DEV_SIDECAR_NAME: &str = "imagediction-sidecar-aarch64-apple-darwin";
 const BUNDLED_SIDECAR_NAME: &str = "imagediction-sidecar";
 const AUDIO_READY_TIMEOUT: Duration = Duration::from_secs(3);
 const AUDIO_READY_POLL_INTERVAL: Duration = Duration::from_millis(50);
@@ -231,6 +230,8 @@ fn early_exit_error(child: Child) -> Result<Child> {
 }
 
 fn resolve_sidecar_path(app: &AppHandle) -> Result<PathBuf> {
+    let dev_sidecar_name = current_dev_sidecar_name();
+
     if let Ok(current_exe) = env::current_exe() {
         if let Some(dir) = current_exe.parent() {
             let bundled_path = dir.join(BUNDLED_SIDECAR_NAME);
@@ -238,7 +239,7 @@ fn resolve_sidecar_path(app: &AppHandle) -> Result<PathBuf> {
                 return Ok(bundled_path);
             }
 
-            let dev_style_path = dir.join(DEV_SIDECAR_NAME);
+            let dev_style_path = dir.join(&dev_sidecar_name);
             if dev_style_path.exists() {
                 return Ok(dev_style_path);
             }
@@ -259,7 +260,7 @@ fn resolve_sidecar_path(app: &AppHandle) -> Result<PathBuf> {
             return Ok(bundled_path);
         }
 
-        let dev_style_path = resource_dir.join(DEV_SIDECAR_NAME);
+        let dev_style_path = resource_dir.join(&dev_sidecar_name);
         if dev_style_path.exists() {
             return Ok(dev_style_path);
         }
@@ -267,7 +268,7 @@ fn resolve_sidecar_path(app: &AppHandle) -> Result<PathBuf> {
 
     let manifest_dir =
         PathBuf::from(env::var("CARGO_MANIFEST_DIR").context("missing CARGO_MANIFEST_DIR")?);
-    let dev_path = manifest_dir.join("binaries").join(DEV_SIDECAR_NAME);
+    let dev_path = manifest_dir.join("binaries").join(&dev_sidecar_name);
     if dev_path.exists() {
         return Ok(dev_path);
     }
@@ -275,4 +276,11 @@ fn resolve_sidecar_path(app: &AppHandle) -> Result<PathBuf> {
     Err(anyhow!(
         "Feedback sidecar was not found in resources or src-tauri/binaries"
     ))
+}
+
+fn current_dev_sidecar_name() -> String {
+    let target = option_env!("TARGET")
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("{}-apple-darwin", std::env::consts::ARCH));
+    format!("imagediction-sidecar-{target}")
 }

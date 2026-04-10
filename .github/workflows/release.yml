@@ -1,0 +1,52 @@
+name: release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    name: Release ${{ matrix.name }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Apple Silicon
+            runner: macos-latest
+          - name: macOS Intel
+            runner: macos-13
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build and publish Feedback
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tauriScript: bun run tauri
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v__VERSION__' }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('Feedback {0}', github.ref_name) || 'Feedback v__VERSION__' }}
+          releaseBody: |
+            Draft macOS build for Feedback.
+
+            This workflow currently publishes unsigned/notarized artifacts suitable for GitHub distribution and internal testing.
+          generateReleaseNotes: true
+          releaseDraft: true
+          prerelease: false
+          args: --bundles app,dmg

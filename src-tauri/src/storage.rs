@@ -11,7 +11,7 @@ use uuid::Uuid;
 use crate::model::{
     CaptureDraft, CaptureEntry, CaptureEntryView, CaptureSavePayload, DictationEntry,
     DictationEntryView, DictationSavePayload, Session, SessionMode, SessionSummary, SessionView,
-    TextNoteEntry, TextNotePayload, TimelineEntry, TimelineEntryView,
+    TextNoteEntry, TextNotePayload, TimelineEntry, TimelineEntryView, TranscriptionProvider,
 };
 
 pub const SESSION_META_FILE: &str = "session.meta.json";
@@ -38,6 +38,7 @@ pub fn create_session(root: &Path, title: Option<String>, mode: SessionMode) -> 
         id: id.clone(),
         title: base_title,
         mode,
+        transcription_provider: None,
         created_at: created_at.clone(),
         updated_at: created_at,
         entries: Vec::new(),
@@ -111,6 +112,21 @@ pub fn persist_session(root: &Path, session: &Session) -> Result<()> {
     fs::write(&paths.markdown_path, render_markdown(&session))
         .context("failed to write session markdown")?;
     Ok(())
+}
+
+pub fn set_session_transcription_provider(
+    root: &Path,
+    session_id: &str,
+    provider: TranscriptionProvider,
+) -> Result<Session> {
+    let mut session = load_session(root, session_id)?;
+    if session.transcription_provider.as_ref() == Some(&provider) {
+        return Ok(session);
+    }
+
+    session.transcription_provider = Some(provider);
+    persist_session(root, &session)?;
+    Ok(session)
 }
 
 pub fn capture_draft_for_temp_file(
@@ -771,7 +787,7 @@ fn session_paths(root: &Path, session_id: &str) -> SessionPaths {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{AnnotationShape, Point, SessionMode, ShapeKind};
+    use crate::model::{AnnotationShape, Point, SessionMode, ShapeKind, TranscriptionProvider};
     use tempfile::tempdir;
 
     #[test]
@@ -830,6 +846,7 @@ mod tests {
             id: "session-1".into(),
             title: "Session".into(),
             mode: SessionMode::Dictation,
+            transcription_provider: None,
             created_at: "2026-04-09T11:00:00Z".into(),
             updated_at: "2026-04-09T11:10:00Z".into(),
             entries: vec![
@@ -891,6 +908,29 @@ mod tests {
             dictation.corrected_transcript.as_deref(),
             Some("Corrected transcript")
         );
+    }
+
+    #[test]
+    fn persists_session_transcription_provider_in_metadata() {
+        let root = tempdir().unwrap();
+        let session =
+            create_session(root.path(), Some("Session".into()), SessionMode::Dictation).unwrap();
+
+        let updated = set_session_transcription_provider(
+            root.path(),
+            &session.id,
+            TranscriptionProvider::OpenAi,
+        )
+        .unwrap();
+
+        assert_eq!(
+            updated.transcription_provider,
+            Some(TranscriptionProvider::OpenAi)
+        );
+
+        let metadata_path = session_paths(root.path(), &session.id).meta_path;
+        let metadata = fs::read_to_string(metadata_path).unwrap();
+        assert!(metadata.contains("\"transcriptionProvider\": \"openai\""));
     }
 
     #[test]

@@ -13,6 +13,8 @@ pub struct Session {
     pub id: String,
     pub title: String,
     pub mode: SessionMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcription_provider: Option<TranscriptionProvider>,
     pub created_at: String,
     pub updated_at: String,
     pub entries: Vec<TimelineEntry>,
@@ -202,6 +204,9 @@ pub struct TranscriptionStatus {
     pub configured: bool,
     pub provider: String,
     pub model: String,
+    pub message: Option<String>,
+    pub fallback_provider: Option<String>,
+    pub fallback_configured: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
